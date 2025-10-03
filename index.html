@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>GPS 里程小工具</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- SheetJS for Excel export -->
+  <script defer src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header>
+    <h1>GPS 里程小工具</h1>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>目前位置</h2>
+      <div id="status" class="status">尚未取得定位</div>
+      <div class="coords">
+        <div>緯度：<span id="lat">–</span></div>
+        <div>經度：<span id="lng">–</span></div>
+        <div>誤差：<span id="acc">–</span> m</div>
+        <div>時間：<span id="ts">–</span></div>
+      </div>
+      <div class="row">
+        <button id="btnStart">開始定位</button>
+        <button id="btnStop" class="secondary">停止定位</button>
+      </div>
+      <div class="row">
+        <a id="mapLink" class="link" href="#" target="_blank" rel="noopener">在地圖開啟</a>
+        <button id="btnShare" class="secondary">傳送地標</button>
+        <button id="btnAddRecord" class="accent">新增記錄</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>里程數</h2>
+      <div class="row">
+        <label for="mileageInput" class="sr-only">輸入里程 (km)</label>
+        <input id="mileageInput" inputmode="decimal" type="number" step="0.01" placeholder="輸入里程 (km)" />
+        <button id="btnSaveMileage" class="accent">儲存</button>
+      </div>
+      <div class="row">
+        <div>目前里程：<strong><span id="mileageDisplay">0</span> km</strong></div>
+        <button id="btnResetMileage" class="danger">重設里程</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>備註</h2>
+      <textarea id="noteInput" rows="2" placeholder="可輸入備註（例如地點說明、任務內容等）"></textarea>
+    </section>
+
+    <section class="card">
+      <h2>已記錄項目 (<span id="recordCount">0</span>)</h2>
+      <div id="records"></div>
+      <div class="row">
+        <button id="btnExport" class="primary">生成 Excel</button>
+        <button id="btnClearRecords" class="danger">清空記錄</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <small>資料僅儲存在本機（localStorage）。若清除瀏覽器資料會一併清除。</small>
+  </footer>
+</body>
+</html>
