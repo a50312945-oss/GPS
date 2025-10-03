@@ -3,54 +3,77 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-  <title>GPS 里程小工具</title>
+  <title>GPS 里程小工具（自動里程版）</title>
   <link rel="stylesheet" href="style.css" />
-  <!-- SheetJS for Excel export -->
   <script defer src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
   <header>
-    <h1>GPS 里程小工具</h1>
+    <h1>GPS 里程小工具（自動里程版）</h1>
   </header>
 
   <main>
     <section class="card">
-      <h2>目前位置</h2>
-      <div id="status" class="status">尚未取得定位</div>
-      <div class="coords">
-        <div>緯度：<span id="lat">–</span></div>
-        <div>經度：<span id="lng">–</span></div>
-        <div>誤差：<span id="acc">–</span> m</div>
-        <div>時間：<span id="ts">–</span></div>
-      </div>
-      <div class="row">
-        <button id="btnStart">開始定位</button>
-        <button id="btnStop" class="secondary">停止定位</button>
-      </div>
-      <div class="row">
-        <a id="mapLink" class="link" href="#" target="_blank" rel="noopener">在地圖開啟</a>
-        <button id="btnShare" class="secondary">傳送地標</button>
-        <button id="btnAddRecord" class="accent">新增記錄</button>
+      <h2>定位 / 地標</h2>
+      <div class="">
+        <div>
+          <div id="status" class="status">尚未取得定位</div>
+          <div class="coords">
+            <div>緯度：<span id="lat">–</span></div>
+            <div>經度：<span id="lng">–</span></div>
+            <div>誤差：<span id="acc">–</span> m</div>
+            <div>速度：<span id="speed">–</span> km/h</div>
+            <div>時間：<span id="ts">–</span></div>
+          </div>
+          <div class="row">
+            <button id="btnStart">開始定位</button>
+            <button id="btnStop" class="secondary">停止定位</button>
+            <a id="mapLink" class="link" href="#" target="_blank" rel="noopener">在地圖開啟</a>
+          </div>
+          <div class="row">
+            <button id="btnShare" class="secondary">傳送地標</button>
+            <button id="btnAddRecord" class="accent">新增記錄</button>
+          </div>
+        </div>
+        <div>
+          <h3>備註</h3>
+          <textarea id="noteInput" rows="3" placeholder="可輸入備註（例如地點說明、任務內容等）"></textarea>
+        </div>
       </div>
     </section>
 
     <section class="card">
       <h2>里程數</h2>
       <div class="row">
-        <label for="mileageInput" class="sr-only">輸入里程 (km)</label>
-        <input id="mileageInput" inputmode="decimal" type="number" step="0.01" placeholder="輸入里程 (km)" />
-        <button id="btnSaveMileage" class="accent">儲存</button>
+        <label class="toggle">
+          <input type="checkbox" id="autoMileageToggle" />
+          <span>自動里程 (β) — 依 GPS 軌跡累加</span>
+        </label>
       </div>
+      <div id="autoPanel" class="autoPanel hidden">
+        <div class="row">
+          <label>精度門檻(m)<input id="accThresh" type="number" step="1" value="25"/></label>
+          <label>最小步長(m)<input id="stepThresh" type="number" step="1" value="5"/></label>
+          <label>速度上限(km/h)<input id="speedMax" type="number" step="1" value="180"/></label>
+          <label>校正係數<input id="scaleFactor" type="number" step="0.01" value="1.00"/></label>
+        </div>
+        <div class="row">
+          <div>自動里程：<strong><span id="autoMileage">0.00</span> km</strong></div>
+          <button id="btnTripStart" class="secondary">開始行程</button>
+          <button id="btnTripPause" class="secondary">暫停</button>
+          <button id="btnTripReset" class="danger">重設行程</button>
+        </div>
+      </div>
+      <hr/>
       <div class="row">
+        <input id="mileageInput" inputmode="decimal" type="number" step="0.01" placeholder="輸入里程 (km)" />
+        <button id="btnUseAuto" class="secondary">套用自動里程</button>
+        <button id="btnSaveMileage" class="accent">儲存</button>
+        <button id="btnResetMileage" class="danger">歸零</button>
+        <div class="spacer"></div>
         <div>目前里程：<strong><span id="mileageDisplay">0</span> km</strong></div>
-        <button id="btnResetMileage" class="danger">重設里程</button>
       </div>
-    </section>
-
-    <section class="card">
-      <h2>備註</h2>
-      <textarea id="noteInput" rows="2" placeholder="可輸入備註（例如地點說明、任務內容等）"></textarea>
     </section>
 
     <section class="card">
@@ -64,7 +87,7 @@
   </main>
 
   <footer>
-    <small>資料僅儲存在本機（localStorage）。若清除瀏覽器資料會一併清除。</small>
+    <small>提示：自動里程以 Haversine 距離累積，並套用精度/步長/速度門檻與校正係數；資料儲存在本機（localStorage）。</small>
   </footer>
 </body>
 </html>
