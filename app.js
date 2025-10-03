@@ -4,34 +4,27 @@
   const state = {
     watchId: null,
     current: null,
-    records: [],
-    mileage: 0,
-    // auto trip
-    autoOn: false,
-    tripRunning: false,
+    lastPoint: null,
+    tracking: false,
+    tripStartTs: null,
+    tripEndTs: null,
     tripKm: 0,
-    lastPoint: null
+    trips: []
   };
 
-  const STORAGE_KEY = "gpsMileageTool_v2";
-  function save() {
+  const STORAGE_KEY = "gpsTripLogger_v1";
+  function saveAll() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      records: state.records,
-      mileage: state.mileage,
-      tripKm: state.tripKm,
-      autoOn: state.autoOn
+      trips: state.trips
     }));
-    updateCounts();
+    updateTripCount();
   }
-  function load() {
+  function loadAll() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
       const data = JSON.parse(raw);
-      state.records = Array.isArray(data.records) ? data.records : [];
-      state.mileage = Number(data.mileage || 0);
-      state.tripKm = Number(data.tripKm || 0);
-      state.autoOn = !!data.autoOn;
+      state.trips = Array.isArray(data.trips) ? data.trips : [];
     } catch(e) {}
   }
 
@@ -39,6 +32,12 @@
     const d = new Date(ts);
     const pad = (n)=> String(n).padStart(2,'0');
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  };
+  const fmtHMS = (sec) => {
+    sec = Math.max(0, Math.floor(sec));
+    const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+    const pad = (n)=> String(n).padStart(2,'0');
+    return `${pad(h)}:${pad(m)}:${pad(s)}`;
   };
 
   function updatePositionUI(pos) {
@@ -53,33 +52,36 @@
     $("mapLink").href = url;
   }
 
-  function updateMileageUI() {
-    $("mileageDisplay").textContent = Number(state.mileage || 0).toFixed(2);
-    $("autoMileage").textContent = Number(state.tripKm || 0).toFixed(2);
+  function updateTripUI() {
+    const dur = (state.tripEndTs ? (state.tripEndTs - state.tripStartTs) : (state.tracking ? (Date.now() - state.tripStartTs) : 0)) / 1000;
+    $("tripDuration").textContent = state.tripStartTs ? fmtHMS(dur) : "00:00:00";
+    $("tripDistance").textContent = state.tripKm.toFixed(2);
+    const hours = Math.max(0.000001, dur/3600);
+    const avg = state.tripKm / hours;
+    $("tripAvg").textContent = isFinite(avg) ? avg.toFixed(1) : "0.0";
   }
 
-  function updateCounts() {
-    $("recordCount").textContent = state.records.length;
+  function updateTripCount() {
+    $("tripCount").textContent = state.trips.length;
   }
 
-  function renderRecords() {
-    const container = $("records");
-    container.innerHTML = "";
-    state.records.slice().reverse().forEach((r) => {
+  function renderTrips() {
+    const root = $("trips");
+    root.innerHTML = "";
+    state.trips.slice().reverse().forEach((t) => {
       const div = document.createElement("div");
-      div.className = "record";
+      div.className = "trip";
       div.innerHTML = `
-        <div><strong>${fmtTs(r.ts)}</strong></div>
-        <div>(${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}) ・ 誤差 ${r.acc?.toFixed(1) ?? "-"} m ・ 速度 ${(r.speedKmh ?? 0).toFixed(1)} km/h</div>
-        <div>里程：<strong>${(r.mileage ?? 0).toFixed(2)} km</strong>（自動里程 ${(r.tripKm ?? 0).toFixed(2)} km）</div>
-        <div>備註：<small>${r.note ? escapeHtml(r.note) : "—"}</small></div>
+        <div><strong>${t.name || "(未命名行程)"} — ${t.distanceKm.toFixed(2)} km</strong></div>
+        <div>${fmtTs(t.startTs)} → ${fmtTs(t.endTs)} ・ 時長 ${fmtHMS((t.endTs - t.startTs)/1000)} ・ 平均 ${(t.avgKmh).toFixed(1)} km/h</div>
+        <div>起點 (${t.startLat.toFixed(6)}, ${t.startLng.toFixed(6)}) ・ <a class="link" href="https://www.google.com/maps?q=${t.startLat},${t.startLng}" target="_blank">地圖</a></div>
+        <div>終點 (${t.endLat.toFixed(6)}, ${t.endLng.toFixed(6)}) ・ <a class="link" href="https://www.google.com/maps?q=${t.endLat},${t.endLng}" target="_blank">地圖</a></div>
+        <div>備註：<small>${t.note ? escapeHtml(t.note) : "—"}</small></div>
         <div class="row">
-          <a class="link" href="https://www.google.com/maps?q=${r.lat},${r.lng}" target="_blank" rel="noopener">地圖</a>
-          <button class="secondary" data-action="share" data-lat="${r.lat}" data-lng="${r.lng}" data-note="${encodeURIComponent(r.note || '')}">分享</button>
-          <button class="danger" data-action="delete" data-ts="${r.ts}">刪除</button>
+          <button class="danger" data-action="del" data-id="${t.id}">刪除</button>
         </div>
       `;
-      container.appendChild(div);
+      root.appendChild(div);
     });
   }
 
@@ -89,39 +91,31 @@
     })[m]);
   }
 
-  // --- Haversine ---
+  // Haversine
   function haversine(a, b) {
-    const R = 6371000; // meters
+    const R = 6371000;
     const toRad = (x)=> x * Math.PI / 180;
     const dLat = toRad(b.lat - a.lat);
     const dLng = toRad(b.lng - a.lng);
     const s1 = Math.sin(dLat/2), s2 = Math.sin(dLng/2);
     const q = s1*s1 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*s2*s2;
-    return 2 * R * Math.asin(Math.sqrt(q)); // meters
+    return 2 * R * Math.asin(Math.sqrt(q));
   }
 
   function shouldAccumulate(prev, curr, cfg) {
     if (!prev) return false;
     if (curr.acc != null && curr.acc > cfg.accThresh) return false;
-    const d = haversine(prev, curr); // meters
+    const d = haversine(prev, curr);
     if (d < cfg.stepThresh) return false;
-    // speed guard (if time between points known)
-    const dt = (curr.ts - prev.ts) / 1000; // seconds
+    const dt = (curr.ts - prev.ts) / 1000;
     if (dt > 0) {
-      const v_kmh = (d/ dt) * 3.6;
+      const v_kmh = (d / dt) * 3.6;
       if (v_kmh > cfg.speedMax) return false;
     }
     return true;
   }
 
-  function doAccumulate(prev, curr, cfg) {
-    const d_m = haversine(prev, curr);
-    const d_km = (d_m / 1000) * cfg.scaleFactor;
-    state.tripKm += d_km;
-  }
-
-  // --- Geolocation ---
-  function startWatch() {
+  function startGPS() {
     if (!navigator.geolocation) {
       $("status").textContent = "此裝置不支援定位。";
       return;
@@ -136,8 +130,8 @@
         $("status").textContent = "已取得定位";
         updatePositionUI(curr);
 
-        // auto mileage
-        if (state.autoOn && state.tripRunning) {
+        // track distance if a trip is running
+        if (state.tracking) {
           const cfg = {
             accThresh: Number($("#accThresh").value || 25),
             stepThresh: Number($("#stepThresh").value || 5),
@@ -146,11 +140,11 @@
           };
           if (curr.acc != null && curr.acc <= cfg.accThresh) {
             if (shouldAccumulate(state.lastPoint, curr, cfg)) {
-              doAccumulate(state.lastPoint, curr, cfg);
-              updateMileageUI();
-              save();
+              const d_m = haversine(state.lastPoint, curr);
+              state.tripKm += (d_m / 1000) * cfg.scaleFactor;
+              updateTripUI();
             }
-            state.lastPoint = {lat: curr.lat, lng: curr.lng, ts: curr.ts};
+            state.lastPoint = { lat: curr.lat, lng: curr.lng, ts: curr.ts };
           }
         }
       },
@@ -160,7 +154,7 @@
       { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 }
     );
   }
-  function stopWatch() {
+  function stopGPS() {
     if (state.watchId != null) {
       navigator.geolocation.clearWatch(state.watchId);
       state.watchId = null;
@@ -168,139 +162,118 @@
     }
   }
 
-  // --- Actions ---
-  function addRecord() {
+  function tripStart() {
     if (!state.current) { alert("尚未取得定位，請先開始定位。"); return; }
-    const note = $("noteInput").value.trim();
-    const rec = {
-      ts: Date.now(),
-      lat: state.current.lat,
-      lng: state.current.lng,
-      acc: state.current.acc,
-      speedKmh: state.current.speedKmh,
-      note,
-      mileage: Number(state.mileage || 0),
-      tripKm: Number(state.tripKm || 0)
-    };
-    state.records.push(rec);
-    save();
-    renderRecords();
+    state.tracking = true;
+    state.tripStartTs = Date.now();
+    state.tripEndTs = null;
+    state.tripKm = 0;
+    state.lastPoint = { lat: state.current.lat, lng: state.current.lng, ts: state.current.ts };
+    updateTripUI();
+  }
+  function tripEnd() {
+    if (!state.tracking) { alert("尚未開始行程"); return; }
+    state.tracking = false;
+    state.tripEndTs = Date.now();
+    updateTripUI();
+  }
+  function tripReset() {
+    if (!confirm("重設本次行程？")) return;
+    state.tracking = false;
+    state.tripStartTs = null;
+    state.tripEndTs = null;
+    state.tripKm = 0;
+    state.lastPoint = null;
+    updateTripUI();
   }
 
-  async function shareLandmark(lat, lng, note) {
-    const url = `https://www.google.com/maps?q=${lat},${lng}`;
-    const text = `位置：${lat.toFixed(6)}, ${lng.toFixed(6)}\n${note ? "備註：" + note + "\n" : ""}${url}`;
-    if (navigator.share) {
-      try { await navigator.share({ title: "地標", text, url }); } catch(e) {}
-    } else {
-      try {
-        await navigator.clipboard.writeText(text);
-        alert("已複製地標內容，可貼上至聊天軟體。");
-      } catch(e) {
-        prompt("此瀏覽器不支援自動複製，請手動複製：", text);
+  function saveTrip() {
+    if (!state.tripStartTs || !state.tripEndTs) { alert("請先開始並結束行程。"); return; }
+    const dur = (state.tripEndTs - state.tripStartTs) / 1000;
+    const hours = Math.max(0.000001, dur/3600);
+    const avg = state.tripKm / hours;
+    const t = {
+      id: Date.now(),
+      name: $("#tripName").value.trim(),
+      note: $("#tripNote").value.trim(),
+      startTs: state.tripStartTs,
+      endTs: state.tripEndTs,
+      distanceKm: Number(state.tripKm),
+      avgKmh: Number(isFinite(avg) ? avg : 0),
+      startLat: state.current?.lat ?? state.lastPoint?.lat ?? 0,
+      startLng: state.current?.lng ?? state.lastPoint?.lng ?? 0,
+      endLat: state.current?.lat ?? 0,
+      endLng: state.current?.lng ?? 0,
+      settings: {
+        accThresh: Number($("#accThresh").value || 25),
+        stepThresh: Number($("#stepThresh").value || 5),
+        speedMax: Number($("#speedMax").value || 180),
+        scaleFactor: Number($("#scaleFactor").value || 1)
       }
-    }
+    };
+    state.trips.push(t);
+    saveAll();
+    renderTrips();
+    alert("已保存行程。");
   }
 
-  function exportExcel() {
-    const rows = [["時間","緯度","經度","誤差(m)","速度(km/h)","里程(km)","自動里程(km)","備註","地圖連結"]];
-    for (const r of state.records) {
-      const mapUrl = `https://www.google.com/maps?q=${r.lat},${r.lng}`;
-      rows.push([fmtTs(r.ts), r.lat, r.lng, r.acc ?? "", (r.speedKmh ?? ""), Number(r.mileage || 0), Number(r.tripKm || 0), r.note || "", mapUrl]);
+  function exportTrips() {
+    const rows = [["行程名稱","開始時間","結束時間","時長(hh:mm:ss)","距離(km)","平均速度(km/h)","起點緯度","起點經度","終點緯度","終點經度","備註","精度門檻(m)","最小步長(m)","速度上限(km/h)","校正係數"]];
+    for (const t of state.trips) {
+      rows.push([
+        t.name || "",
+        fmtTs(t.startTs),
+        fmtTs(t.endTs),
+        (function(){ const s=(t.endTs-t.startTs)/1000; const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), ss=Math.floor(s%60); const pad=(n)=>String(n).padStart(2,"0"); return `${pad(h)}:${pad(m)}:${pad(ss)}`; })(),
+        Number(t.distanceKm || 0),
+        Number(t.avgKmh || 0),
+        t.startLat, t.startLng, t.endLat, t.endLng,
+        t.note || "",
+        t.settings?.accThresh ?? "",
+        t.settings?.stepThresh ?? "",
+        t.settings?.speedMax ?? "",
+        t.settings?.scaleFactor ?? 1
+      ]);
     }
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{wch:20},{wch:11},{wch:11},{wch:8},{wch:10},{wch:10},{wch:12},{wch:30},{wch:24}];
-
-    const totalMileage = Number(state.mileage || 0);
-    const summary = [
-      ["摘要",""],
-      ["總里程 (手動) km", totalMileage],
-      ["自動里程 (行程) km", Number(state.tripKm || 0)],
-      ["記錄筆數", state.records.length],
-      ["匯出時間", fmtTs(Date.now())],
-      ["自動里程設定", ""],
-      ["精度門檻(m)", $("#accThresh").value],
-      ["最小步長(m)", $("#stepThresh").value],
-      ["速度上限(km/h)", $("#speedMax").value],
-      ["校正係數", $("#scaleFactor").value]
-    ];
-    const ws2 = XLSX.utils.aoa_to_sheet(summary);
-    ws2["!cols"] = [{wch:24},{wch:24}];
-
+    ws["!cols"] = [{wch:16},{wch:20},{wch:20},{wch:12},{wch:10},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:30},{wch:12},{wch:12},{wch:14},{wch:10}];
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws2, "摘要");
-    XLSX.utils.book_append_sheet(wb, ws, "記錄");
-    const fname = `GPS里程_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.xlsx`;
+    XLSX.utils.book_append_sheet(wb, ws, "行程列表");
+    const fname = `GPS行程列表_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.xlsx`;
     XLSX.writeFile(wb, fname);
   }
 
-  function clearRecords() {
-    if (!confirm("確定要清空所有記錄嗎？此動作無法復原。")) return;
-    state.records = [];
-    save();
-    renderRecords();
-  }
-
-  // UI events
-  $("btnStart").addEventListener("click", startWatch);
-  $("btnStop").addEventListener("click", stopWatch);
-  $("btnAddRecord").addEventListener("click", addRecord);
-  $("btnExport").addEventListener("click", exportExcel);
-  $("btnClearRecords").addEventListener("click", clearRecords);
-  $("btnShare").addEventListener("click", () => {
-    if (!state.current) { alert("尚未取得定位，請先開始定位。"); return; }
-    const note = $("noteInput").value.trim();
-    shareLandmark(state.current.lat, state.current.lng, note);
+  // DOM events
+  $("btnStartGPS").addEventListener("click", startGPS);
+  $("btnStopGPS").addEventListener("click", stopGPS);
+  $("btnTripStart").addEventListener("click", tripStart);
+  $("btnTripEnd").addEventListener("click", tripEnd);
+  $("btnTripReset").addEventListener("click", tripReset);
+  $("btnSaveTrip").addEventListener("click", saveTrip);
+  $("btnExportTrips").addEventListener("click", exportTrips);
+  $("btnClearTrips").addEventListener("click", () => {
+    if (!confirm("確定要清空歷史行程？")) return;
+    state.trips = [];
+    saveAll();
+    renderTrips();
+  });
+  $("trips").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    if (btn.dataset.action === "del") {
+      const id = Number(btn.dataset.id);
+      const idx = state.trips.findIndex(x => x.id === id);
+      if (idx >= 0) { state.trips.splice(idx, 1); saveAll(); renderTrips(); }
+    }
   });
 
-  $("btnSaveMileage").addEventListener("click", () => {
-    const val = Number($("mileageInput").value);
-    if (Number.isNaN(val)) { alert("請輸入數字。"); return; }
-    state.mileage = val;
-    updateMileageUI();
-    save();
-  });
-  $("btnResetMileage").addEventListener("click", () => {
-    if (!confirm("要把里程歸零嗎？")) return;
-    state.mileage = 0;
-    $("mileageInput").value = "";
-    updateMileageUI();
-    save();
-  });
-  $("btnUseAuto").addEventListener("click", () => {
-    state.mileage = Number(state.tripKm || 0);
-    $("mileageInput").value = state.mileage.toFixed(2);
-    updateMileageUI();
-    save();
-  });
-
-  // Auto mileage controls
-  $("autoMileageToggle").addEventListener("change", (e) => {
-    state.autoOn = e.target.checked;
-    document.querySelector(".autoPanel").classList.toggle("hidden", !state.autoOn);
-    save();
-  });
-  $("btnTripStart").addEventListener("click", () => {
-    state.tripRunning = true;
-    state.lastPoint = state.current ? {lat: state.current.lat, lng: state.current.lng, ts: state.current.ts} : null;
-  });
-  $("btnTripPause").addEventListener("click", () => {
-    state.tripRunning = false;
-  });
-  $("btnTripReset").addEventListener("click", () => {
-    if (!confirm("重設行程里程？")) return;
-    state.tripKm = 0;
-    state.lastPoint = null;
-    updateMileageUI();
-    save();
-  });
+  // Timer for updating duration on screen
+  setInterval(() => {
+    if (state.tracking && state.tripStartTs) updateTripUI();
+  }, 1000);
 
   // Init
-  load();
-  // reflect toggle
-  $("autoMileageToggle").checked = state.autoOn;
-  document.querySelector(".autoPanel").classList.toggle("hidden", !state.autoOn);
-  updateMileageUI();
-  updateCounts();
-  renderRecords();
+  loadAll();
+  updateTripCount();
+  renderTrips();
 })();
